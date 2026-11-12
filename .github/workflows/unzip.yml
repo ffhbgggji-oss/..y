@@ -17,7 +17,7 @@ jobs:
       - name: Extract ZIP
         run: |
           mkdir -p extracted
-          python3 -m zipfile -e CartoonStudio-repaired.zip extracted
+          python3 -m zipfile -e CartoonStudio-redy.zip extracted
 
           ROOT=$(find extracted -mindepth 1 -maxdepth 1 -type d | head -n 1)
 
