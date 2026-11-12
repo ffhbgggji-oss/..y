@@ -1,24 +1,4 @@
-name: Build CartoonStudio APK
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
-
-permissions:
-  contents: write
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Unzip CartoonStudio
+- name: Unzip CartoonStudio
         run: |
           if [ -f "CartoonStudio-ready.zip" ]; then
             unzip -oq CartoonStudio-ready.zip -d .
@@ -30,9 +10,13 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
             git add -A
+
+            # Не изменяем workflow-файл через GITHUB_TOKEN
+            git reset -- .github/workflows/unzip.yml
+
             if ! git diff --cached --quiet; then
-              git commit -m "Extract CartoonStudio ZIP [skip ci]"
-              git push
+              git commit -m "Extract CartoonStudio source [skip ci]"
+              git push origin HEAD:${GITHUB_REF_NAME}
             fi
           else
             echo "ZIP not found"
