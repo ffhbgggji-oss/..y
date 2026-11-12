@@ -1,4 +1,4 @@
-name: CartoonStudio Android Build
+name: CartoonStudio Unzip and Android Build
 
 "on":
   workflow_dispatch:
@@ -8,27 +8,62 @@ name: CartoonStudio Android Build
       - master
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  android-build:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
     steps:
+      # 1. Получаем проект
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Java 17
+      # 2. Распаковываем ZIP
+      - name: Extract CartoonStudio ZIP
+        run: |
+          ZIP=""
+
+          if [ -f "CartoonStudio-download.zip" ]; then
+            ZIP="CartoonStudio-download.zip"
+          elif [ -f "CartoonStudio-ready.zip" ]; then
+            ZIP="CartoonStudio-ready.zip"
+          fi
+
+          if [ -n "$ZIP" ]; then
+            unzip -oq "$ZIP" -d .
+            rm "$ZIP"
+          fi
+
+          test -f project.godot
+
+      # 3. Сохраняем исходники в GitHub
+      - name: Save extracted project
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+          git reset -- .github/workflows/unzip.yml
+
+          if ! git diff --cached --quiet; then
+            git commit -m "Update CartoonStudio source [skip ci]"
+            git push origin HEAD:${GITHUB_REF_NAME}
+          fi
+
+      # 4. Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
+      # 5. Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: >-
+          packages: |
             platform-tools
             platforms;android-34
             build-tools;34.0.0
@@ -36,13 +71,15 @@ jobs:
             ndk;23.2.8568313
             cmake;3.10.2.4988404
 
+      # 6. Gradle
       - name: Install Gradle
         run: |
           wget -q https://services.gradle.org/distributions/gradle-8.2.1-bin.zip
           unzip -q gradle-8.2.1-bin.zip
           echo "$GITHUB_WORKSPACE/gradle-8.2.1/bin" >> "$GITHUB_PATH"
 
-      - name: Download Godot 4.2.1
+      # 7. Godot 4.2.1
+      - name: Download Godot
         run: |
           mkdir -p "$RUNNER_TEMP/godot"
           cd "$RUNNER_TEMP/godot"
@@ -52,7 +89,8 @@ jobs:
           unzip -q Godot_v4.2.1-stable_linux.x86_64.zip
           chmod +x Godot_v4.2.1-stable_linux.x86_64
 
-      - name: Download Android Export Templates
+      # 8. Android templates
+      - name: Download Export Templates
         run: |
           cd "$RUNNER_TEMP"
 
@@ -63,32 +101,35 @@ jobs:
 
           TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.2.1.stable"
           mkdir -p "$TEMPLATE_DIR"
-
           cp -a templates/templates/. "$TEMPLATE_DIR/"
 
           test -f "$TEMPLATE_DIR/android_source.zip"
 
-      - name: Build Android File Picker Plugin
+      # 9. Сборка Android-плагина
+      - name: Build File Picker Plugin
         run: |
           gradle --no-daemon --max-workers=2 \
             -p android-plugin \
             :GodotAndroidFilePicker:assembleRelease
 
-          mkdir -p addons/GodotAndroidFilePicker/bin/release
-
           AAR=$(find android-plugin/GodotAndroidFilePicker/build \
-            -name "GodotAndroidFilePicker-release.aar" | head -n 1)
+            -name "*release.aar" | head -n 1)
 
           test -n "$AAR"
 
-          cp "$AAR" addons/GodotAndroidFilePicker/bin/release/GodotAndroidFilePicker.aar
+          mkdir -p addons/GodotAndroidFilePicker/bin/release
 
-      - name: Check Godot Project
+          cp "$AAR" \
+            addons/GodotAndroidFilePicker/bin/release/GodotAndroidFilePicker.aar
+
+      # 10. Проверка проекта
+      - name: Check Project
         run: |
           test -f project.godot
           test -f export_presets.cfg
           test -f icon.png
 
+      # 11. Импорт проекта Godot
       - name: Import Godot Project
         run: |
           GODOT="$RUNNER_TEMP/godot/Godot_v4.2.1-stable_linux.x86_64"
@@ -97,7 +138,8 @@ jobs:
             --path "$GITHUB_WORKSPACE" \
             --import --quit
 
-      - name: Install Android Build Template
+      # 12. Установка Android Build Template
+      - name: Install Android Template
         run: |
           TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.2.1.stable"
 
@@ -108,8 +150,6 @@ jobs:
           touch android/build/.gdignore
 
           unzip -q -o "$TEMPLATE_DIR/android_source.zip" -d android/build
-
-          mkdir -p android/build
 
           touch android/build/gradle.properties
 
@@ -124,6 +164,7 @@ jobs:
 
           test -f android/build/build.gradle
 
+      # 13. Debug Keystore
       - name: Generate Debug Keystore
         run: |
           keytool -genkeypair -v \
@@ -137,6 +178,7 @@ jobs:
             -keyalg RSA \
             -keysize 2048
 
+      # 14. Сборка APK
       - name: Build CartoonStudio APK
         env:
           GODOT_ANDROID_KEYSTORE_DEBUG_PATH: ${{ runner.temp }}/debug.keystore
@@ -155,6 +197,7 @@ jobs:
 
           test -s build/CartoonStudio-debug.apk
 
+      # 15. Проверка APK
       - name: Verify APK
         run: |
           unzip -t build/CartoonStudio-debug.apk
@@ -162,6 +205,7 @@ jobs:
           "$ANDROID_HOME/build-tools/34.0.0/apksigner" \
             verify --verbose build/CartoonStudio-debug.apk
 
+      # 16. Загрузка APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
