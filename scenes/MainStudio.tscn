@@ -1,0 +1,25 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/MainStudio.gd" id="1_main_studio"]
+[ext_resource type="Script" path="res://scripts/RigAnimationEditor.gd" id="2_rig_editor"]
+
+[sub_resource type="Environment" id="Environment_default"]
+background_mode = 1
+background_color = Color(0.12, 0.14, 0.18, 1)
+
+[node name="MainStudio" type="Node3D"]
+script = ExtResource("1_main_studio")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+position = Vector3(0, 2.2, 7.5)
+current = true
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-35, -30, 0)
+light_energy = 1.2
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_default")
+
+[node name="RigAnimationEditor" type="Node" parent="."]
+script = ExtResource("2_rig_editor")
