@@ -63,14 +63,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platform-tools
-            platforms;android-34
-            build-tools;34.0.0
-            cmdline-tools;latest
-            ndk;23.2.8568313
-            cmake;3.10.2.4988404
-
+          packages: "platform-tools platforms;android-34 build-tools;34.0.0 cmdline-tools;latest ndk;23.2.8568313 cmake;3.10.2.4988404"
       # 6. Gradle
       - name: Install Gradle
         run: |
