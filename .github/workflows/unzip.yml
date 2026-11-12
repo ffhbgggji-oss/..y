@@ -1,24 +1,44 @@
-- name: Unzip CartoonStudio
+name: CartoonStudio Unzip
+
+"on":
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract ZIP
         run: |
           if [ -f "CartoonStudio-ready.zip" ]; then
             unzip -oq CartoonStudio-ready.zip -d .
             rm CartoonStudio-ready.zip
-
-            test -f project.godot
-
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-            git add -A
-
-            # Не изменяем workflow-файл через GITHUB_TOKEN
-            git reset -- .github/workflows/unzip.yml
-
-            if ! git diff --cached --quiet; then
-              git commit -m "Extract CartoonStudio source [skip ci]"
-              git push origin HEAD:${GITHUB_REF_NAME}
-            fi
           else
-            echo "ZIP not found"
-            test -f project.godot
+            echo "CartoonStudio-ready.zip not found"
+            exit 1
+          fi
+
+          test -f project.godot
+
+      - name: Save extracted files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+          git reset -- .github/workflows/unzip.yml
+
+          if ! git diff --cached --quiet; then
+            git commit -m "Extract CartoonStudio source [skip ci]"
+            git push origin HEAD:${GITHUB_REF_NAME}
           fi
