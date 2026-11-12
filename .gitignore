@@ -1,8 +1,0 @@
-.godot/
-android/build/
-build/
-android-plugin/.gradle/
-android-plugin/GodotAndroidFilePicker/build/
-addons/GodotAndroidFilePicker/bin/release/*.aar
-*.keystore
-*.jks
