@@ -52,7 +52,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "7.6.4"
+          gradle-version: "8.2.1"
 
       # Android SDK без setup-android action
       - name: Setup Android SDK
@@ -120,8 +120,6 @@ jobs:
              addons/GodotAndroidFilePicker/bin/release/GodotAndroidFilePicker.aar
 
           test -s addons/GodotAndroidFilePicker/bin/release/GodotAndroidFilePicker.aar
-
-          echo "Android plugin successfully built!"
           
       # Export templates
       - name: Install Godot templates
