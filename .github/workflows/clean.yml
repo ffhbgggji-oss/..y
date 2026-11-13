@@ -253,14 +253,29 @@ jobs:
       # APK export
       - name: Export APK
         run: |
+          set -e
+
+          echo "Cleaning Android resource metadata..."
+
+          if [ -d android/build/res ]; then
+            find android/build/res -type f -name "*.import" -delete
+          fi
+
           mkdir -p build
+
+          echo "Exporting CartoonStudio..."
 
           godot --headless \
             --path . \
             --export-debug "Android" \
             build/CartoonStudio-debug.apk
 
-          test -s build/CartoonStudio-debug.apk
+          if [ ! -s build/CartoonStudio-debug.apk ]; then
+            echo "ERROR: APK was not created!"
+            exit 1
+          fi
+
+          echo "APK successfully created!"
 
       # Upload APK
       - name: Upload APK
