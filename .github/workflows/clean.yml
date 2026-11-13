@@ -1,7 +1,11 @@
-name: CartoonStudio APK Build
+name: Build CartoonStudio APK
 
 "on":
   workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
 
 permissions:
   contents: read
@@ -9,141 +13,251 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
-      - name: Download repository
+      # 1. Получение репозитория
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract CartoonStudio ZIP
+      # 2. Распаковка проекта
+      - name: Unzip CartoonStudio
         run: |
-          ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
+          sudo apt-get update
+          sudo apt-get install -y unzip
 
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: ZIP not found!"
+          ARCHIVE="CartoonStudio-animation-preserved-fixed.zip"
+
+          if [ ! -f "$ARCHIVE" ]; then
+            echo "ERROR: ZIP archive not found!"
             exit 1
           fi
 
-          mkdir -p project
-          unzip -oq "$ZIP" -d project
+          unzip -oq "$ARCHIVE" -d .
 
-          PROJECT=$(find project -name project.godot -printf '%h\n' | head -n 1)
-
-          if [ -z "$PROJECT" ]; then
-            echo "ERROR: project.godot not found!"
+          if [ ! -f project.godot ]; then
+            echo "ERROR: project.godot not found after extraction!"
+            find . -maxdepth 3 -type f | head -100
             exit 1
           fi
 
-          echo "PROJECT_DIR=$PROJECT" >> "$GITHUB_ENV"
+          echo "CartoonStudio successfully extracted."
 
-      - name: Setup Java
+      # 3. Java 17
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
+      # 4. Gradle
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.2.1"
+
+      # 5. Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: "platform-tools platforms;android-34 build-tools;34.0.0 cmdline-tools;latest"
 
-      - name: Download Godot 4.2.1
+      # 6. Установка Android компонентов
+      - name: Install Android SDK packages
+        timeout-minutes: 15
         run: |
-          wget -q https://github.com/godotengine/godot/releases/download/4.2.1-stable/Godot_v4.2.1-stable_linux.x86_64.zip
-          unzip -oq Godot_v4.2.1-stable_linux.x86_64.zip
-          chmod +x Godot_v4.2.1-stable_linux.x86_64
+          yes | sdkmanager --licenses
 
-      - name: Install Android Export Templates
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "cmdline-tools;latest" \
+            "ndk;23.2.8568313" \
+            "cmake;3.10.2.4988404"
+
+      # 7. Установка Godot 4.2.1
+      - name: Install Godot 4.2.1
         run: |
-          wget -q https://github.com/godotengine/godot/releases/download/4.2.1-stable/Godot_v4.2.1-stable_export_templates.tpz
+          wget -q \
+            https://github.com/godotengine/godot/releases/download/4.2.1-stable/Godot_v4.2.1-stable_linux.x86_64.zip \
+            -O godot.zip
 
-          mkdir -p templates
-          unzip -oq Godot_v4.2.1-stable_export_templates.tpz -d templates
+          unzip -q godot.zip -d godot-bin
+
+          sudo install -m 0755 \
+            godot-bin/Godot_v4.2.1-stable_linux.x86_64 \
+            /usr/local/bin/godot
+
+          godot --version
+
+      # 8. Экспортные шаблоны Godot
+      - name: Install Godot export templates
+        run: |
+          wget -q \
+            https://github.com/godotengine/godot/releases/download/4.2.1-stable/Godot_v4.2.1-stable_export_templates.tpz \
+            -O templates.tpz
+
+          mkdir -p templates-extracted
+
+          unzip -q templates.tpz -d templates-extracted
 
           TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.2.1.stable"
+
           mkdir -p "$TEMPLATE_DIR"
 
-          cp templates/templates/android_source.zip "$TEMPLATE_DIR/"
-          cp templates/templates/android_debug.apk "$TEMPLATE_DIR/"
-          cp templates/templates/android_release.apk "$TEMPLATE_DIR/"
+          cp -a templates-extracted/templates/. "$TEMPLATE_DIR/"
 
-      - name: Create Debug Keystore
+          if [ -f templates-extracted/version.txt ]; then
+            cp templates-extracted/version.txt "$TEMPLATE_DIR/version.txt"
+          fi
+
+          test -s "$TEMPLATE_DIR/android_source.zip"
+          test -s "$TEMPLATE_DIR/android_debug.apk"
+          test -s "$TEMPLATE_DIR/android_release.apk"
+
+      # 9. Сборка Android File Picker
+      - name: Build Android File Picker plugin
+        run: |
+          if [ -d android-plugin ]; then
+            cd android-plugin
+
+            gradle --no-daemon \
+              --max-workers=2 \
+              :GodotAndroidFilePicker:assembleRelease
+
+            cd ..
+
+            mkdir -p addons/GodotAndroidFilePicker/bin/release
+
+            cp \
+              android-plugin/GodotAndroidFilePicker/build/outputs/aar/GodotAndroidFilePicker-release.aar \
+              addons/GodotAndroidFilePicker/bin/release/GodotAndroidFilePicker.aar
+
+            test -s addons/GodotAndroidFilePicker/bin/release/GodotAndroidFilePicker.aar
+          else
+            echo "Android plugin directory not found. Skipping."
+          fi
+
+      # 10. Проверка проекта
+      - name: Validate Godot project
+        run: |
+          test -f project.godot
+          test -f export_presets.cfg
+
+          godot --headless \
+            --editor \
+            --path . \
+            --quit
+
+      # 11. Подготовка Android Gradle шаблона
+      - name: Prepare Android build template
+        run: |
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.2.1.stable"
+
+          test -s "$TEMPLATE_DIR/android_source.zip"
+
+          rm -rf android
+
+          mkdir -p android/build
+
+          printf '4.2.1.stable\n' > android/.build_version
+
+          : > android/build/.gdignore
+
+          unzip -q -o \
+            "$TEMPLATE_DIR/android_source.zip" \
+            -d android/build
+
+          test -s android/build/build.gradle
+
+          touch android/build/gradle.properties
+
+          cat >> android/build/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8
+          org.gradle.workers.max=2
+          org.gradle.parallel=false
+          android.useAndroidX=true
+          android.enableJetifier=true
+          EOF
+
+      # 12. Создание debug keystore
+      - name: Generate debug keystore
         run: |
           keytool -genkeypair -v \
-            -keystore "$GITHUB_WORKSPACE/debug.keystore" \
+            -keystore "$RUNNER_TEMP/debug.keystore" \
             -storepass android \
             -alias androiddebugkey \
             -keypass android \
             -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
+            -validity 9999 \
+            -dname "CN=Android Debug,O=Android,C=US" \
+            -deststoretype pkcs12
 
-      - name: Configure Android Preset
+          test -s "$RUNNER_TEMP/debug.keystore"
+
+      # 13. Настройка подписи APK
+      - name: Configure Android signing
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/debug.keystore
         run: |
           python3 - <<'PY'
-          import os, re
+          import os
+          from pathlib import Path
 
-          path = os.path.join(os.environ["PROJECT_DIR"], "export_presets.cfg")
+          path = Path("export_presets.cfg")
+          content = path.read_text()
 
-          if not os.path.exists(path):
-              raise SystemExit("export_presets.cfg not found")
+          replacements = {
+              'keystore/debug=""':
+                  f'keystore/debug="{os.environ["KEYSTORE_PATH"]}"',
 
-          text = open(path, encoding="utf-8").read()
-          sections = re.split(r'(?=^\[)', text, flags=re.M)
-          updated = False
+              'keystore/debug_user=""':
+                  'keystore/debug_user="androiddebugkey"',
 
-          for i, section in enumerate(sections):
-              if not section.startswith("[preset.") or 'name="Android"' not in section:
-                  continue
+              'keystore/debug_password=""':
+                  'keystore/debug_password="android"',
+          }
 
-              values = {
-                  "keystore/debug": os.path.join(os.environ["GITHUB_WORKSPACE"], "debug.keystore"),
-                  "keystore/debug_user": "androiddebugkey",
-                  "keystore/debug_password": "android",
-              }
+          for old, new in replacements.items():
+              content = content.replace(old, new)
 
-              for key, value in values.items():
-                  line = f'{key}="{value}"'
-                  pattern = rf'^{re.escape(key)}=.*$'
-
-                  if re.search(pattern, section, flags=re.M):
-                      section = re.sub(pattern, lambda m: line, section, flags=re.M)
-                  else:
-                      section = section.rstrip() + "\n" + line + "\n"
-
-              sections[i] = section
-              updated = True
-              break
-
-          if not updated:
-              raise SystemExit('Android export preset not found')
-
-          open(path, "w", encoding="utf-8").write("".join(sections))
+          path.write_text(content)
           PY
 
-      - name: Import Project
-        run: |
-          ./Godot_v4.2.1-stable_linux.x86_64 \
-            --headless \
-            --editor \
-            --path "$PROJECT_DIR" \
-            --import
-
-      - name: Build APK
+      # 14. Экспорт APK
+      - name: Export CartoonStudio APK
+        timeout-minutes: 25
         run: |
           mkdir -p build
 
-          ./Godot_v4.2.1-stable_linux.x86_64 \
-            --headless \
-            --path "$PROJECT_DIR" \
+          godot --headless \
+            --path . \
+            --verbose \
             --export-debug "Android" \
-            build/CartoonStudio.apk
+            build/CartoonStudio-debug.apk
 
-          test -s build/CartoonStudio.apk
+          if [ ! -s build/CartoonStudio-debug.apk ]; then
+            echo "ERROR: APK was not created!"
+            exit 1
+          fi
 
-      - name: Upload APK
+          echo "APK successfully created."
+
+      # 15. Проверка APK
+      - name: Verify APK
+        run: |
+          unzip -t build/CartoonStudio-debug.apk
+
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" \
+            verify --verbose \
+            build/CartoonStudio-debug.apk
+
+          echo "APK verification completed."
+
+      # 16. Загрузка APK
+      - name: Upload CartoonStudio APK
         uses: actions/upload-artifact@v4
         with:
           name: CartoonStudio-APK
-          path: build/CartoonStudio.apk
+          path: build/CartoonStudio-debug.apk
           if-no-files-found: error
+          retention-days: 14
