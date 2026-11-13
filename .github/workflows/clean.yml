@@ -57,9 +57,36 @@ jobs:
           gradle-version: "8.2.1"
 
       # 5. Android SDK
+      # Установка Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ""
 
+      # Установка компонентов SDK
+      - name: Install Android SDK packages
+        timeout-minutes: 15
+        run: |
+          set -e
+
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          if [ ! -f "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)"
+          fi
+
+          echo "Using SDK Manager: $SDKMANAGER"
+
+          yes | "$SDKMANAGER" --licenses || true
+
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;23.2.8568313" \
+            "cmake;3.10.2.4988404"
+
+          echo "Android SDK installed successfully."
       # 6. Установка Android компонентов
       - name: Install Android SDK packages
         timeout-minutes: 15
