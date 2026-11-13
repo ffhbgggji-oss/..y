@@ -49,19 +49,26 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Android SDK
+      # Android SDK без setup-android action
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
         run: |
           set -e
 
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          export ANDROID_HOME="/usr/local/lib/android/sdk"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
 
-          if [ ! -f "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
+            -name sdkmanager -type f | head -n 1)
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager not found"
+            exit 1
           fi
+
+          echo "Using: $SDKMANAGER"
 
           yes | "$SDKMANAGER" --licenses || true
 
@@ -71,6 +78,8 @@ jobs:
             "build-tools;34.0.0" \
             "ndk;23.2.8568313" \
             "cmake;3.10.2.4988404"
+
+          echo "Android SDK ready"
 
       # Godot 4.2.1
       - name: Install Godot
