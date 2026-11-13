@@ -11,18 +11,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Download repository
         uses: actions/checkout@v4
 
-      - name: Unzip project
+      - name: Extract CartoonStudio ZIP
         run: |
-          ZIP=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
+          ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
+
           if [ -z "$ZIP" ]; then
-            echo "ZIP file not found"
+            echo "ERROR: ZIP not found!"
             exit 1
           fi
+
           mkdir -p project
-          unzip -o "$ZIP" -d project
+          unzip -oq "$ZIP" -d project
+
+          PROJECT=$(find project -name project.godot -printf '%h\n' | head -n 1)
+
+          if [ -z "$PROJECT" ]; then
+            echo "ERROR: project.godot not found!"
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT" >> "$GITHUB_ENV"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -33,24 +44,106 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: "platform-tools platforms;android-34 build-tools;34.0.0"
+          packages: "platform-tools platforms;android-34 build-tools;34.0.0 cmdline-tools;latest"
 
-      - name: Setup Godot
+      - name: Download Godot 4.2.1
         run: |
           wget -q https://github.com/godotengine/godot/releases/download/4.2.1-stable/Godot_v4.2.1-stable_linux.x86_64.zip
-          unzip Godot_v4.2.1-stable_linux.x86_64.zip
+          unzip -oq Godot_v4.2.1-stable_linux.x86_64.zip
           chmod +x Godot_v4.2.1-stable_linux.x86_64
+
+      - name: Install Android Export Templates
+        run: |
+          wget -q https://github.com/godotengine/godot/releases/download/4.2.1-stable/Godot_v4.2.1-stable_export_templates.tpz
+
+          mkdir -p templates
+          unzip -oq Godot_v4.2.1-stable_export_templates.tpz -d templates
+
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.2.1.stable"
+          mkdir -p "$TEMPLATE_DIR"
+
+          cp templates/templates/android_source.zip "$TEMPLATE_DIR/"
+          cp templates/templates/android_debug.apk "$TEMPLATE_DIR/"
+          cp templates/templates/android_release.apk "$TEMPLATE_DIR/"
+
+      - name: Create Debug Keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore "$GITHUB_WORKSPACE/debug.keystore" \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Configure Android Preset
+        run: |
+          python3 - <<'PY'
+          import os, re
+
+          path = os.path.join(os.environ["PROJECT_DIR"], "export_presets.cfg")
+
+          if not os.path.exists(path):
+              raise SystemExit("export_presets.cfg not found")
+
+          text = open(path, encoding="utf-8").read()
+          sections = re.split(r'(?=^\[)', text, flags=re.M)
+          updated = False
+
+          for i, section in enumerate(sections):
+              if not section.startswith("[preset.") or 'name="Android"' not in section:
+                  continue
+
+              values = {
+                  "keystore/debug": os.path.join(os.environ["GITHUB_WORKSPACE"], "debug.keystore"),
+                  "keystore/debug_user": "androiddebugkey",
+                  "keystore/debug_password": "android",
+              }
+
+              for key, value in values.items():
+                  line = f'{key}="{value}"'
+                  pattern = rf'^{re.escape(key)}=.*$'
+
+                  if re.search(pattern, section, flags=re.M):
+                      section = re.sub(pattern, lambda m: line, section, flags=re.M)
+                  else:
+                      section = section.rstrip() + "\n" + line + "\n"
+
+              sections[i] = section
+              updated = True
+              break
+
+          if not updated:
+              raise SystemExit('Android export preset not found')
+
+          open(path, "w", encoding="utf-8").write("".join(sections))
+          PY
+
+      - name: Import Project
+        run: |
+          ./Godot_v4.2.1-stable_linux.x86_64 \
+            --headless \
+            --editor \
+            --path "$PROJECT_DIR" \
+            --import
 
       - name: Build APK
         run: |
           mkdir -p build
+
           ./Godot_v4.2.1-stable_linux.x86_64 \
             --headless \
-            --path project \
-            --export-debug "Android" build/CartoonStudio.apk
+            --path "$PROJECT_DIR" \
+            --export-debug "Android" \
+            build/CartoonStudio.apk
+
+          test -s build/CartoonStudio.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: CartoonStudio-APK
           path: build/CartoonStudio.apk
+          if-no-files-found: error
