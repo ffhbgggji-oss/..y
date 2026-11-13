@@ -49,6 +49,11 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "7.6.4"
+
       # Android SDK без setup-android action
       - name: Setup Android SDK
         run: |
@@ -95,7 +100,29 @@ jobs:
             /usr/local/bin/godot
 
           godot --version
+          
+      # Сборка Android File Picker
+      - name: Build Godot Android File Picker
+        run: |
+          set -e
 
+          cd android-plugin
+
+          gradle --no-daemon \
+            --max-workers=2 \
+            :GodotAndroidFilePicker:assembleRelease
+
+          cd ..
+
+          mkdir -p addons/GodotAndroidFilePicker/bin/release
+
+          cp android-plugin/GodotAndroidFilePicker/build/outputs/aar/GodotAndroidFilePicker-release.aar \
+             addons/GodotAndroidFilePicker/bin/release/GodotAndroidFilePicker.aar
+
+          test -s addons/GodotAndroidFilePicker/bin/release/GodotAndroidFilePicker.aar
+
+          echo "Android plugin successfully built!"
+          
       # Export templates
       - name: Install Godot templates
         run: |
