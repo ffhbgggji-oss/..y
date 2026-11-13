@@ -148,6 +148,8 @@ jobs:
       # Debug keystore
       - name: Generate debug keystore
         run: |
+          mkdir -p "$RUNNER_TEMP"
+
           keytool -genkeypair -v \
             -keystore "$RUNNER_TEMP/debug.keystore" \
             -storepass android \
@@ -155,38 +157,73 @@ jobs:
             -keypass android \
             -keyalg RSA \
             -validity 9999 \
-            -dname "CN=Android Debug,O=Android,C=US" \
-            -deststoretype pkcs12
+            -dname "CN=Android Debug,O=Android,C=US"
+
+          test -f "$RUNNER_TEMP/debug.keystore"
 
       # Configure signing
-      - name: Configure signing
-        env:
-          KEYSTORE_PATH: ${{ runner.temp }}/debug.keystore
+      - name: Configure Android signing
         run: |
           python3 - <<'PY'
-          import os
+          import re
           from pathlib import Path
 
           path = Path("export_presets.cfg")
           content = path.read_text()
 
-          content = content.replace(
-              'keystore/debug=""',
-              f'keystore/debug="{os.environ["KEYSTORE_PATH"]}"'
+          # Находим Android preset
+          match = re.search(
+              r'\[preset\.(\d+)\]\s*\n(.*?)(?=\n\[|\Z)',
+              content,
+              re.S
           )
 
-          content = content.replace(
-              'keystore/debug_user=""',
-              'keystore/debug_user="androiddebugkey"'
-          )
+          if not match or 'name="Android"' not in match.group(2):
+              raise RuntimeError("Android export preset not found!")
 
-          content = content.replace(
-              'keystore/debug_password=""',
-              'keystore/debug_password="android"'
-          )
+          index = match.group(1)
+          section = f"[preset.{index}.options]"
 
+          if section not in content:
+              raise RuntimeError("Android preset options section not found!")
+
+          start = content.index(section)
+          end = content.find("\n[", start + len(section))
+
+          if end == -1:
+              end = len(content)
+
+          options = content[start:end]
+
+          values = {
+              "keystore/debug": f'"{Path.home()}/../.."'  # replaced below
+          }
+
+          import os
+          keystore = os.environ["RUNNER_TEMP"] + "/debug.keystore"
+
+          replacements = {
+              "keystore/debug": keystore,
+              "keystore/debug_user": "androiddebugkey",
+              "keystore/debug_password": "android"
+          }
+
+          for key, value in replacements.items():
+              line = f'{key}="{value}"'
+              pattern = rf'(?m)^{re.escape(key)}=.*$'
+
+              if re.search(pattern, options):
+                  options = re.sub(pattern, lambda _: line, options)
+              else:
+                  options += "\n" + line
+
+          content = content[:start] + options + content[end:]
           path.write_text(content)
+
+          print("Android debug signing configured.")
           PY
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
 
       # APK export
       - name: Export APK
