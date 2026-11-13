@@ -8,8 +8,7 @@ const UI_SCRIPT = preload("res://scripts/MobileAnimUI.gd")
 const IMPORTER_SCRIPT = preload("res://scripts/AndroidModelImporter.gd")
 const SERIALIZER_SCRIPT = preload("res://scripts/AnimationProjectSerializer.gd")
 const TWO_D_EDITOR_SCRIPT = preload("res://scripts/TwoDAnimationEditor.gd")
-const SKELETON_OVERLAY_SCRIPT = preload("res://scripts/SkeletonOverlay3D.gd")
-const BONE_GIZMO_SCRIPT = preload("res://scripts/BoneTransformGizmo.gd")
+const BONE_OVERLAY_SCRIPT = preload("res://scripts/BoneOverlay.gd")
 const AUDIO_TIMELINE_SCRIPT = preload("res://scripts/AudioTimeline.gd")
 const OBJ_IMPORTER_SCRIPT = preload("res://scripts/ObjRuntimeImporter.gd")
 const SAVE_FILE := "user://rig_animation.json"
@@ -24,8 +23,7 @@ var camera_controller: CameraKeyframeController
 var export_camera: Camera3D
 var export_camera_controller: CameraKeyframeController
 var active_camera_mode := "animation"
-var skeleton_overlay: SkeletonOverlay3D
-var bone_gizmo: BoneTransformGizmo
+var bone_overlay: BoneOverlay
 var bones_visible := true
 var bone_axis_mode := "screen"
 var mobile_ui: MobileAnimUI
@@ -68,9 +66,6 @@ func _ready() -> void:
     add_child(camera_controller)
     camera_controller.bind_camera(camera)
     _create_export_camera()
-    skeleton_overlay = SKELETON_OVERLAY_SCRIPT.new()
-    skeleton_overlay.name = "SkeletonOverlay3D"
-    studio.add_child(skeleton_overlay)
     importer = IMPORTER_SCRIPT.new()
     add_child(importer)
     importer.model_path_selected.connect(_import_model)
@@ -85,9 +80,12 @@ func _ready() -> void:
     # hiding the legacy UI and before calculating touch-safe viewport zones.
     await get_tree().process_frame
     mobile_ui.visible = true
-    bone_gizmo = BONE_GIZMO_SCRIPT.new()
-    bone_gizmo.name = "BoneTransformGizmo"
-    mobile_ui.add_child(bone_gizmo)
+    # Screen-space rig overlay: connected bones, orange selection and XYZ gizmos.
+    bone_overlay = BONE_OVERLAY_SCRIPT.new()
+    bone_overlay.name = "BoneOverlay"
+    bone_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    bone_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    mobile_ui.add_child(bone_overlay)
     mobile_ui.import_requested.connect(importer.open_model_picker)
     mobile_ui.camera_reset_requested.connect(_reset_camera)
     mobile_ui.save_requested.connect(_save_project)
@@ -100,7 +98,7 @@ func _ready() -> void:
     mobile_ui.frame_changed.connect(_on_frame_changed)
     mobile_ui.tool_changed.connect(func(mode: String):
         tool_mode = mode
-        _update_bone_gizmo()
+        _update_bone_overlay()
     )
     mobile_ui.rig_mode_changed.connect(_set_rig_mode)
     mobile_ui.mp4_export_requested.connect(_export_mp4)
@@ -150,6 +148,8 @@ func _ready() -> void:
     set_process_input(true)
 
 func _process(delta: float) -> void:
+    if bone_overlay != null:
+        bone_overlay.visible = not (two_d_editor != null and two_d_editor.active)
     if two_d_editor != null and two_d_editor.active:
         return
     if is_playing and frames.size() >= 2:
@@ -164,23 +164,13 @@ func _process(delta: float) -> void:
         camera_controller.apply_key(camera_controller.interpolate_keys(a.get("camera", {}), b.get("camera", {}), weight))
         current_frame = from_index
         mobile_ui.set_timeline(frames.size(), current_frame, str(a.get("kind", "pose")))
-    _update_bone_gizmo()
+    _update_bone_overlay()
 
-func _update_bone_gizmo() -> void:
-    if bone_gizmo == null:
-        return
-    if selected_bone < 0 or skeleton == null or selected_bone >= skeleton.get_bone_count():
-        bone_gizmo.update_gizmo(Vector2(-10000.0, -10000.0), tool_mode, false)
+func _update_bone_overlay() -> void:
+    if bone_overlay == null:
         return
     var active_cam := _active_camera()
-    var world_position := skeleton.global_transform * skeleton.get_bone_global_pose(selected_bone).origin
-    if active_cam.is_position_behind(world_position):
-        bone_gizmo.update_gizmo(Vector2(-10000.0, -10000.0), tool_mode, false)
-        return
-    var screen_position := active_cam.unproject_position(world_position)
-    var screen_height := get_viewport().get_visible_rect().size.y
-    var visible := screen_position.y >= mobile_ui.top_reserved and screen_position.y <= screen_height - mobile_ui.bottom_reserved
-    bone_gizmo.update_gizmo(screen_position, tool_mode, visible)
+    bone_overlay.configure(skeleton, active_cam, selected_bone, tool_mode, bones_visible, mobile_ui.top_reserved, mobile_ui.bottom_reserved)
 
 func _input(event: InputEvent) -> void:
     if (mp4_exporting or (two_d_editor != null and two_d_editor.active)) or is_playing or mobile_ui == null:
@@ -255,9 +245,7 @@ func _begin_pointer(pointer_id: int, position: Vector2) -> void:
             var plane_normal := _active_camera().global_basis.z.normalized()
             ik_drag_plane = Plane(plane_normal, plane_normal.dot(end_position))
             mobile_ui.set_status("IK: перетащите выбранную конечную кость к цели")
-    if skeleton_overlay != null:
-        skeleton_overlay.configure(skeleton, selected_bone, bones_visible)
-    _update_bone_gizmo()
+    _update_bone_overlay()
 
 func _drag_pointer(relative: Vector2, screen_position: Vector2 = Vector2.ZERO) -> void:
     if pointer_mode == "camera":
@@ -283,8 +271,7 @@ func _drag_pointer(relative: Vector2, screen_position: Vector2 = Vector2.ZERO) -
                     changed = bones.solve_ik_ccd(selected_bone, target_point, 18, 0.012, 16)
     if changed:
         _store_current_frame()
-        if skeleton_overlay != null:
-            skeleton_overlay.configure(skeleton, selected_bone, bones_visible)
+        _update_bone_overlay()
 
 func _set_rig_mode(mode: String) -> void:
     if mode == "IK":
@@ -293,7 +280,7 @@ func _set_rig_mode(mode: String) -> void:
     else:
         tool_mode = "rotate"
         mobile_ui.set_status("FK: вращайте выбранные кости вручную")
-    _update_bone_gizmo()
+    _update_bone_overlay()
 
 func _export_mp4() -> void:
     if mp4_exporting:
@@ -379,8 +366,7 @@ func _refresh_skeleton() -> void:
         return
     skeleton = _find_skeleton(puppet_root)
     bones.bind_skeleton(skeleton)
-    if skeleton_overlay != null:
-        skeleton_overlay.configure(skeleton, selected_bone, bones_visible)
+    _update_bone_overlay()
 
 func _find_skeleton(node: Node) -> Skeleton3D:
     if node is Skeleton3D:
@@ -541,8 +527,7 @@ func _adjust_active_camera_height(amount: float) -> void:
 
 func _set_bones_visible(value: bool) -> void:
     bones_visible = value
-    if skeleton_overlay != null:
-        skeleton_overlay.configure(skeleton, selected_bone, bones_visible)
+    _update_bone_overlay()
     mobile_ui.set_status("Отображение костей включено" if value else "Отображение костей выключено")
 
 func _set_model_transform(property_name: String, axis: String, value: float) -> void:
@@ -632,7 +617,7 @@ func _replace_imported_model(imported: Node3D, success_message: String) -> void:
     for child in puppet_root.get_children():
         child.queue_free()
     selected_bone = -1
-    _update_bone_gizmo()
+    _update_bone_overlay()
     imported.name = "ImportedModel"
     puppet_root.add_child(imported)
     await get_tree().process_frame
